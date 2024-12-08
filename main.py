@@ -5,10 +5,12 @@ import sqlite3
 import datetime
 import jwt
 import uuid
+import time
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from urllib.parse import urlparse, parse_qs
 from argon2 import PasswordHasher
+from collections import defaultdict
 
 
 #Please note I did my best to lint
@@ -19,6 +21,7 @@ from argon2 import PasswordHasher
 #sets host and server port
 HOSTNAME = "localhost"
 SERVERPORT = 8080
+rate_lim = defaultdict(list)
 
 #generates RSA encryption/decryption keys
 private_key = rsa.generate_private_key(
@@ -43,6 +46,16 @@ expired_pem = expired_key.private_bytes(
 )
 
 numbers = private_key.private_numbers()
+
+#used chatgpt with the prompt of the requirements for rate limiter
+def rate_limit(client_ip, max_req, time_win):
+    """Rate limit"""
+    curr_time = time.time()
+    rate_lim[client_ip] = [timestamp for timestamp in rate_lim[client_ip] if curr_time - timestamp < time_win]
+    if len(rate_lim[client_ip]) >= max_req:
+        return False
+    rate_lim[client_ip].append(curr_time)
+    return True
 
 #used chatgpt with the prompts "SQL backed storage table schema in python" andh>
 def create_open_db(db_name):
@@ -99,6 +112,16 @@ def store_person(db_name, uname, email, p_hash):
     cursor.execute("""INSERT INTO users(username, email, password_hash) VALUES (?, ?, ?);""", (uname, email, p_hash))
     connect.commit()
     print("Person is Entered")
+    connect.close()
+
+#used chatgpt prompt with all the requirements for logging authentication requests
+def log_auth_request(db_name, ip_address, user_id=None):
+    """Logs auth request"""
+    connect = sqlite3.connect(db_name)
+    cursor = connect.cursor()
+    cursor.execute("""INSERT INTO auth_logs(request_ip, user_id) VALUES (?, ?);""", (ip_address, user_id))
+    connect.commit()
+    print("Logged /auth")
     connect.close()
 
 def get_private_key(db_name, exp=False):
@@ -182,6 +205,14 @@ class MyServer(BaseHTTPRequestHandler):
         params = parse_qs(parsed_path.query)
         if parsed_path.path == "/auth":
             print("Handling /auth request")
+            ip_address = self.client_address[0]
+            if not rate_limit(ip_address, 10, 1):
+                self.send_response(429)
+                self.end_headers()
+                self.wfile.write(b"Too many requests")
+                return
+            username = "username"
+            log_auth_request("totally_not_my_privateKeys.db", ip_address, user_id=username)
             headers = {
                 "kid": "goodKID"
             }
