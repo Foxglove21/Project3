@@ -1,3 +1,4 @@
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import base64
 import json
@@ -62,7 +63,7 @@ def create_open_db(db_name):
     """Creates a DB file"""
     #create or opens a db file
     connect = sqlite3.connect(db_name)
-    print("Database Created")
+    #print("Database Created")
     #creates table
     cursor = connect.cursor()
     create_table_key = """CREATE TABLE IF NOT EXISTS keys(
@@ -104,26 +105,6 @@ def store_private_key(db_name, key, exp):
     print("Key Stored")
     connect.close()
 
-#used chatgpt by using the prompt with all the requirements for user tables
-def store_person(db_name, uname, email, p_hash):
-    """Storing users with hashing for passwords"""
-    connect = sqlite3.connect(db_name)
-    cursor = connect.cursor()
-    cursor.execute("""INSERT INTO users(username, email, password_hash) VALUES (?, ?, ?);""", (uname, email, p_hash))
-    connect.commit()
-    print("Person is Entered")
-    connect.close()
-
-#used chatgpt prompt with all the requirements for logging authentication requests
-def log_auth_request(db_name, ip_address, user_id=None):
-    """Logs auth request"""
-    connect = sqlite3.connect(db_name)
-    cursor = connect.cursor()
-    cursor.execute("""INSERT INTO auth_logs(request_ip, user_id) VALUES (?, ?);""", (ip_address, user_id))
-    connect.commit()
-    print("Logged /auth")
-    connect.close()
-
 def get_private_key(db_name, exp=False):
     """Gets private keys"""
     connect = sqlite3.connect(db_name)
@@ -139,6 +120,26 @@ def get_private_key(db_name, exp=False):
         return key_row[0]
     else:
         return None
+
+#used chatgpt by using the prompt with all the requirements for user tables
+def store_person(db_name, uname, email, p_hash):
+    """Storing users with hashing for passwords"""
+    connect = sqlite3.connect(db_name)
+    cursor = connect.cursor()
+    cursor.execute("""INSERT INTO users(username, email, password_hash) VALUES (?, ?, ?);""", (uname, email, p_hash))
+    connect.commit()
+    print("Person is Entered")
+    connect.close()
+
+#used chatgpt prompt with all the requirements for logging authentication requests
+def log_auth_request(db_name, ip_address, user_id):
+    """Logs auth request"""
+    connect = sqlite3.connect(db_name)
+    cursor = connect.cursor()
+    cursor.execute("""INSERT INTO auth_logs(request_ip, user_id) VALUES (?, ?);""", (ip_address, user_id))
+    connect.commit()
+    print("Logged /auth")
+    connect.close()
 
 def int_to_base64(value):
     """Convert an integer to a Base64URL-encoded string"""
@@ -159,12 +160,14 @@ def get_valid_keys(db_name):
     keys = cursor.fetchall()
     connect.close()
     return [key_row[0] for key_row in keys]
-    
+
+#creates database first because I learn from my mistakes
+fname = "totally_not_my_privateKeys.db"
+create_open_db(fname)
+
 class MyServer(BaseHTTPRequestHandler):
     """creating a JWKS server via class"""
     def __init__(self, *args, **kwargs):
-        fname = "totally_not_my_privateKeys.db"
-        create_open_db(fname)
         expiration1 = int((datetime.datetime.utcnow() + datetime.timedelta(hours=1)).timestamp())
         store_private_key(fname, pem, expiration1)
         expiration2 = int((datetime.datetime.utcnow() + datetime.timedelta(seconds=0)).timestamp())
@@ -203,16 +206,18 @@ class MyServer(BaseHTTPRequestHandler):
         print("Recieved POST request")
         parsed_path = urlparse(self.path)
         params = parse_qs(parsed_path.query)
+        #/auth request
         if parsed_path.path == "/auth":
             print("Handling /auth request")
             ip_address = self.client_address[0]
+            #checking limit
             if not rate_limit(ip_address, 10, 1):
                 self.send_response(429)
                 self.end_headers()
                 self.wfile.write(b"Too many requests")
                 return
-            username = "username"
-            log_auth_request("totally_not_my_privateKeys.db", ip_address, user_id=username)
+            #logging auth request
+            log_auth_request("totally_not_my_privateKeys.db", ip_address, user_id=1)
             headers = {
                 "kid": "goodKID"
             }
@@ -252,7 +257,9 @@ class MyServer(BaseHTTPRequestHandler):
             password = str(uuid.uuid4())
             ph = PasswordHasher()
             phash = ph.hash(password)
-            store_person("totally_not_my_privateKeys.db", udata['username'], udata['email'], phash)
+            username = udata.get("username")
+            email = udata.get("email")
+            store_person("totally_not_my_privateKeys.db", username, email, phash)
             self.send_response(201)
             self.send_header("Content-type", "application/json")
             self.end_headers()
